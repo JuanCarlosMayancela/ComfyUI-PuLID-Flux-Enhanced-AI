@@ -78,7 +78,7 @@ def forward_orig(
     control=None,
     transformer_options={},
     attn_mask: Tensor = None,
-    **kwargs # so it won't break if we add more stuff in the future
+    **kwargs
 ) -> Tensor:
     patches_replace = transformer_options.get("patches_replace", {})
 
@@ -105,27 +105,40 @@ def forward_orig(
         if ("double_block", i) in blocks_replace:
             def block_wrap(args):
                 out = {}
-                out["img"], out["txt"] = block(img=args["img"],
-                                               txt=args["txt"],
-                                               vec=args["vec"],
-                                               pe=args["pe"],
-                                               attn_mask=args.get("attn_mask"))
+                block_args = {
+                    "img": args["img"],
+                    "txt": args["txt"],
+                    "vec": args["vec"],
+                    "pe": args["pe"]
+                }
+                if "attn_mask" in args:
+                    block_args["attn_mask"] = args["attn_mask"]
+                out["img"], out["txt"] = block(**block_args)
                 return out
 
-            out = blocks_replace[("double_block", i)]({"img": img,
-                                                       "txt": txt,
-                                                       "vec": vec,
-                                                       "pe": pe,
-                                                       "attn_mask": attn_mask},
-                                                      {"original_block": block_wrap})
+            call_args = {
+                "img": img,
+                "txt": txt,
+                "vec": vec,
+                "pe": pe
+            }
+            if attn_mask is not None:
+                call_args["attn_mask"] = attn_mask
+
+            out = blocks_replace[("double_block", i)](call_args, {"original_block": block_wrap})
             txt = out["txt"]
             img = out["img"]
         else:
-            img, txt = block(img=img,
-                             txt=txt,
-                             vec=vec,
-                             pe=pe,
-                             attn_mask=attn_mask)
+            # Prepare arguments for block call
+            block_args = {
+                "img": img,
+                "txt": txt,
+                "vec": vec,
+                "pe": pe
+            }
+            if attn_mask is not None:
+                block_args["attn_mask"] = attn_mask
+            img, txt = block(**block_args)
 
         if control is not None: # Controlnet
             control_i = control.get("input")
@@ -137,7 +150,7 @@ def forward_orig(
         # PuLID attention
         if self.pulid_data:
             if i % self.pulid_double_interval == 0:
-                # Will calculate influence of all pulid nodes at once
+                # Will calculate influence of all pulid nodes at on
                 for _, node_data in self.pulid_data.items():
                     condition_start = node_data['sigma_start'] >= timesteps
                     condition_end = timesteps >= node_data['sigma_end']
@@ -153,20 +166,36 @@ def forward_orig(
         if ("single_block", i) in blocks_replace:
             def block_wrap(args):
                 out = {}
-                out["img"] = block(args["img"],
-                                   vec=args["vec"],
-                                   pe=args["pe"],
-                                   attn_mask=args.get("attn_mask"))
+                block_args = {
+                    "img": args["img"],
+                    "vec": args["vec"],
+                    "pe": args["pe"]
+                }
+                if "attn_mask" in args:
+                    block_args["attn_mask"] = args["attn_mask"]
+                out["img"] = block(**block_args)
                 return out
 
-            out = blocks_replace[("single_block", i)]({"img": img,
-                                                       "vec": vec,
-                                                       "pe": pe,
-                                                       "attn_mask": attn_mask}, 
-                                                      {"original_block": block_wrap})
+            call_args = {
+                "img": img,
+                "vec": vec,
+                "pe": pe
+            }
+            if attn_mask is not None:
+                call_args["attn_mask"] = attn_mask
+
+            out = blocks_replace[("single_block", i)](call_args, {"original_block": block_wrap})
             img = out["img"]
         else:
-            img = block(img, vec=vec, pe=pe, attn_mask=attn_mask)
+            # Prepare arguments for single block call
+            block_args = {
+                "img": img,
+                "vec": vec,
+                "pe": pe
+            }
+            if attn_mask is not None:
+                block_args["attn_mask"] = attn_mask
+            img = block(**block_args)
 
         if control is not None: # Controlnet
             control_o = control.get("output")
@@ -174,7 +203,6 @@ def forward_orig(
                 add = control_o[i]
                 if add is not None:
                     img[:, txt.shape[1] :, ...] += add
-
 
         # PuLID attention
         if self.pulid_data:
@@ -195,7 +223,7 @@ def forward_orig(
 
     img = img[:, txt.shape[1] :, ...]
 
-    img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)
+    img = self.final_layer(img, vec)
     return img
 
 def tensor_to_image(tensor):
