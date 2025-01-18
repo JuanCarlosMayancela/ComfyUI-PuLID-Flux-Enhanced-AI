@@ -78,7 +78,7 @@ def forward_orig(
     control=None,
     transformer_options={},
     attn_mask: Tensor = None,
-    **kwargs
+    **kwargs # so it won't break if we add more stuff in the future
 ) -> Tensor:
     patches_replace = transformer_options.get("patches_replace", {})
 
@@ -129,7 +129,6 @@ def forward_orig(
             txt = out["txt"]
             img = out["img"]
         else:
-            # Prepare arguments for block call
             block_args = {
                 "img": img,
                 "txt": txt,
@@ -150,7 +149,7 @@ def forward_orig(
         # PuLID attention
         if self.pulid_data:
             if i % self.pulid_double_interval == 0:
-                # Will calculate influence of all pulid nodes at on
+                # Will calculate influence of all pulid nodes at once
                 for _, node_data in self.pulid_data.items():
                     condition_start = node_data['sigma_start'] >= timesteps
                     condition_end = timesteps >= node_data['sigma_end']
@@ -166,14 +165,10 @@ def forward_orig(
         if ("single_block", i) in blocks_replace:
             def block_wrap(args):
                 out = {}
-                block_args = {
-                    "img": args["img"],
-                    "vec": args["vec"],
-                    "pe": args["pe"]
-                }
                 if "attn_mask" in args:
-                    block_args["attn_mask"] = args["attn_mask"]
-                out["img"] = block(**block_args)
+                    out["img"] = block(args["img"], vec=args["vec"], pe=args["pe"], attn_mask=args["attn_mask"])
+                else:
+                    out["img"] = block(args["img"], vec=args["vec"], pe=args["pe"])
                 return out
 
             call_args = {
@@ -187,15 +182,10 @@ def forward_orig(
             out = blocks_replace[("single_block", i)](call_args, {"original_block": block_wrap})
             img = out["img"]
         else:
-            # Prepare arguments for single block call
-            block_args = {
-                "img": img,
-                "vec": vec,
-                "pe": pe
-            }
             if attn_mask is not None:
-                block_args["attn_mask"] = attn_mask
-            img = block(**block_args)
+                img = block(img, vec=vec, pe=pe, attn_mask=attn_mask)
+            else:
+                img = block(img, vec=vec, pe=pe)
 
         if control is not None: # Controlnet
             control_o = control.get("output")
@@ -222,7 +212,6 @@ def forward_orig(
             img = torch.cat((txt, real_img), 1)
 
     img = img[:, txt.shape[1] :, ...]
-
     img = self.final_layer(img, vec)
     return img
 
